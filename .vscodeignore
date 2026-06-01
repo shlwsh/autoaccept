@@ -1,0 +1,14 @@
+**/*.test.js
+test/
+test_cdp*
+.vscode/
+.git/
+.github/
+.agent/
+.gemini/
+*.vsix
+*.zip
+COMMAND_AUDIT.md
+ANALYSIS.md
+CHANGELOG.md
+worker/
