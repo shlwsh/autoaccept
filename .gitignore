@@ -18,3 +18,5 @@ vsix_check
 temp_extract
 *.zip
 worker/
+.env.local
+
