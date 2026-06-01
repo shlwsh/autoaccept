@@ -311,15 +311,109 @@ async function checkAndFixCDP() {
 
     // Port refused — prompt user
     log(`[CDP] ⚠ Port ${configPort} refused — remote debugging not enabled`);
+    
+    const actions = [];
+    if (process.platform === 'win32') {
+        actions.push('Auto-Fix Shortcut (Windows)');
+    } else if (process.platform === 'linux') {
+        actions.push('Auto-Fix Shortcut (Linux)');
+    }
+    actions.push('Manual Guide');
+
     vscode.window.showErrorMessage(
         `⚡ AutoAccept needs Debug Mode (Port ${configPort}). Please apply the fix or update your shortcut.`,
-        'Auto-Fix Shortcut (Windows)',
-        'Manual Guide'
+        ...actions
     ).then(action => {
-        if (action === 'Auto-Fix Shortcut (Windows)') applyPermanentWindowsPatch(configPort);
-        else if (action === 'Manual Guide') vscode.env.openExternal(vscode.Uri.parse('https://github.com/yazanbaker94/AntiGravity-AutoAccept#setup'));
+        if (action === 'Auto-Fix Shortcut (Windows)') {
+            applyPermanentWindowsPatch(configPort);
+        } else if (action === 'Auto-Fix Shortcut (Linux)') {
+            applyPermanentLinuxPatch(configPort);
+        } else if (action === 'Manual Guide') {
+            vscode.env.openExternal(vscode.Uri.parse('https://github.com/yazanbaker94/AntiGravity-AutoAccept#setup'));
+        }
     });
     return false;
+}
+
+function applyPermanentLinuxPatch(targetPort) {
+    if (process.platform !== 'linux') {
+        vscode.window.showInformationMessage('Auto-patching is Linux-only.');
+        return;
+    }
+
+    log(`[CDP] Running shortcut patcher for port ${targetPort} on Linux...`);
+    try {
+        const execPath = process.execPath;
+        const appName = path.basename(execPath).toLowerCase(); // e.g. "antigravity" or "cursor"
+        
+        const systemDesktopPaths = [
+            path.join('/usr/share/applications', `${appName}.desktop`),
+            path.join('/usr/share/applications', `${appName}-url-handler.desktop`),
+            path.join('/usr/share/applications', 'antigravity.desktop'),
+            path.join('/usr/share/applications', 'cursor.desktop')
+        ];
+        
+        let sourcePath = null;
+        for (const p of systemDesktopPaths) {
+            if (fs.existsSync(p)) {
+                sourcePath = p;
+                break;
+            }
+        }
+
+        if (!sourcePath) {
+            log(`[CDP] No system desktop file found matching name: ${appName}`);
+            vscode.window.showWarningMessage(
+                `Could not find launcher shortcut for ${appName} in /usr/share/applications. Please add --remote-debugging-port=${targetPort} manually.`
+            );
+            return;
+        }
+
+        log(`[CDP] Found source desktop file: ${sourcePath}`);
+        let content = fs.readFileSync(sourcePath, 'utf8');
+
+        const flag = `--remote-debugging-port=${targetPort}`;
+        
+        // Match Exec= line and insert the flag right after the binary path
+        content = content.replace(/^(Exec\s*=\s*["']?[^"\n\s]+["']?)(.*)$/gm, (match, execPart, argsPart) => {
+            if (argsPart.includes('--remote-debugging-port=')) {
+                if (argsPart.includes(flag)) {
+                    return match;
+                }
+                return `${execPart}${argsPart.replace(/--remote-debugging-port=\d+/, flag)}`;
+            }
+            return `${execPart} ${flag}${argsPart}`;
+        });
+
+        const userAppsDir = path.join(require('os').homedir(), '.local/share/applications');
+        if (!fs.existsSync(userAppsDir)) {
+            fs.mkdirSync(userAppsDir, { recursive: true });
+        }
+
+        const destPath = path.join(userAppsDir, path.basename(sourcePath));
+        fs.writeFileSync(destPath, content, 'utf8');
+        log(`[CDP] ✓ Patched desktop file written to: ${destPath}`);
+
+        cp.exec(`update-desktop-database "${userAppsDir}"`, (err) => {
+            if (err) {
+                log(`[CDP] Desktop database update warning: ${err.message}`);
+            } else {
+                log(`[CDP] Desktop database updated successfully.`);
+            }
+        });
+
+        vscode.window.showInformationMessage(
+            `✅ Shortcut auto-patched! Please completely CLOSE and RESTART Antigravity from your applications menu or dock to activate.`,
+            'Reload Window'
+        ).then(action => {
+            if (action === 'Reload Window') {
+                vscode.commands.executeCommand('workbench.action.reloadWindow');
+            }
+        });
+    } catch (e) {
+        log(`[CDP] Linux patcher error: ${e.message}`);
+        vscode.window.showErrorMessage(`Failed to apply Linux shortcut patch: ${e.message}`);
+    }
 }
 
 function applyPermanentWindowsPatch(targetPort) {
